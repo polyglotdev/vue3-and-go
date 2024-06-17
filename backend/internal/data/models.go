@@ -106,8 +106,8 @@ func (u *User) GetByEmail(email string) (*User, error) {
 			return nil, fmt.Errorf("no user found with email %s", email)
 
 		}
-			log.Printf("failed to get user by email: %v", err)
-			return nil, err
+		log.Printf("failed to get user by email: %v", err)
+		return nil, err
 	}
 
 	return &user, nil
@@ -134,14 +134,86 @@ func (u *User) GetByID(id int) (*User, error) {
 	err := row.Scan(&user.ID, &user.Email, &user.FirstName, &user.LastName, &user.Password, &user.CreatedAt, &user.UpdatedAt)
 	if err != nil {
 		if err == sql.ErrNoRows {
-      return nil, errors.New("user not found")
+			return nil, errors.New("user not found")
 
 		}
-			log.Printf("failed to get user by ID: %v", err)
-			return nil, err
+		log.Printf("failed to get user by ID: %v", err)
+		return nil, err
 	}
 
 	return &user, nil
+}
+
+// UpdateUser updates a user in the database.
+// It returns an error if any occurs during the query execution or row scanning.
+//
+// Parameters:
+//   - user: The User struct representing the user to update.
+//
+// Returns:
+//   - An error if any occurs during the query execution or row scanning.
+func (u *User) Update(user User) error {
+	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
+	defer cancel()
+
+	// Update the user in the database
+	query := "UPDATE users SET email = $1, first_name = $2, last_name = $3, updated_at = $4 WHERE id = $5"
+
+	_, err := db.ExecContext(ctx, query, user.Email, user.FirstName, user.LastName, user.UpdatedAt, user.ID)
+	if err != nil {
+		log.Printf("failed to update user: %v", err)
+		return err
+	}
+
+	return nil
+}
+
+// Delete deletes a user from the database.
+// It returns an error if any occurs during the query execution or row scanning.
+//
+// Parameters:
+//   - id: The ID of the user to delete.
+//
+// Returns:
+//   - An error if any occurs during the query execution or row scanning.
+func (u *User) Delete(id int) error {
+	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
+	defer cancel()
+
+	// Delete the user from the database
+	query := "DELETE FROM users WHERE id = $1"
+
+	_, err := db.ExecContext(ctx, query, id)
+	if err != nil {
+		log.Printf("failed to delete user: %v", err)
+		return err
+	}
+
+	return nil
+}
+
+// Insert inserts a user into the database.
+// It returns an error if any occurs during the query execution or row scanning.
+//
+// Parameters:
+//   - user: The User struct representing the user to insert.
+//
+// Returns:
+//   - An error if any occurs during the query execution or row scanning.
+func (u *User) Insert(user User) error {
+	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
+	defer cancel()
+
+	// Insert the user into the database
+	query := "INSERT INTO users (email, first_name, last_name, password, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6)"
+
+	_, err := db.ExecContext(ctx, query, user.Email, user.FirstName, user.LastName, user.Password, user.CreatedAt, user.UpdatedAt)
+	if err != nil {
+		log.Printf("failed to insert user: %v", err)
+		return err
+	}
+
+	return nil
 }
 
 // Token is a struct that represents a token in the database
