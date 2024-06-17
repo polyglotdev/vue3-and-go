@@ -2,7 +2,10 @@ package data
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/base32"
 	"errors"
 	"fmt"
 	"log"
@@ -333,15 +336,15 @@ func (t *Token) GetByToken(plainText string) (*Token, error) {
 // Returns:
 //   - A pointer to the User struct representing the user associated with the token.
 //   - An error if any occurs during the query execution or row scanning.
-func (t *Token) GetUserByToken(token string) (*User, error) {
+func (t *Token) GetUserByToken(token Token) (*User, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
 	defer cancel()
 
 	// Select the user associated with the token
-	query := "SELECT id, email, first_name, last_name, password, created_at, updated_at FROM users WHERE id = (SELECT user_id FROM tokens WHERE token = $1)"
+	query := "SELECT id, email, first_name, last_name, password, created_at, updated_at FROM users WHERE id = $1"
 
 	var user User
-	row := db.QueryRowContext(ctx, query, token)
+	row := db.QueryRowContext(ctx, query, token.UserID)
 	err := row.Scan(&user.ID, &user.Email, &user.FirstName, &user.LastName, &user.Password, &user.CreatedAt, &user.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -353,4 +356,33 @@ func (t *Token) GetUserByToken(token string) (*User, error) {
 	}
 
 	return &user, nil
+}
+
+// GenerateToken generates a token for a user.
+// It returns a pointer to the Token struct representing the generated token.
+//
+// Parameters:
+//   - user: The User struct representing the user to generate a token for.
+//
+// Returns:
+//   - A pointer to the Token struct representing the generated token.
+//   - An error if any occurs during the token generation process.
+func (t *Token) GenerateToken(userID int, ttl time.Duration) (*Token, error) {
+	token := &Token{
+		UserID: userID,
+		Expiry: time.Now().Add(ttl),
+	}
+
+	randomBytes := make([]byte, 16)
+	_, err := rand.Read(randomBytes)
+	if err != nil {
+		log.Printf("failed to generate random bytes: %v", err)
+		return nil, err
+	}
+
+	token.Token = base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(randomBytes)
+	hash := sha256.Sum256([]byte(token.Token))
+	token.TokenHash = hash[:]
+
+	return token, nil
 }
