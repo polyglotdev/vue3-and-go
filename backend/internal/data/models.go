@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log"
 	"time"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 const dbTimeout = time.Second * 3
@@ -102,7 +104,7 @@ func (u *User) GetByEmail(email string) (*User, error) {
 	var user User
 	err := row.Scan(&user.ID, &user.Email, &user.FirstName, &user.LastName, &user.Password, &user.CreatedAt, &user.UpdatedAt)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("no user found with email %s", email)
 
 		}
@@ -133,7 +135,7 @@ func (u *User) GetByID(id int) (*User, error) {
 	var user User
 	err := row.Scan(&user.ID, &user.Email, &user.FirstName, &user.LastName, &user.Password, &user.CreatedAt, &user.UpdatedAt)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, errors.New("user not found")
 
 		}
@@ -144,7 +146,7 @@ func (u *User) GetByID(id int) (*User, error) {
 	return &user, nil
 }
 
-// UpdateUser updates a user in the database.
+// Update updates a user in the database.
 // It returns an error if any occurs during the query execution or row scanning.
 //
 // Parameters:
@@ -200,20 +202,75 @@ func (u *User) Delete(id int) error {
 //
 // Returns:
 //   - An error if any occurs during the query execution or row scanning.
-func (u *User) Insert(user User) error {
+func (u *User) Insert(user User) (int, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
 	defer cancel()
 
-	// Insert the user into the database
-	query := "INSERT INTO users (email, first_name, last_name, password, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6)"
-
-	_, err := db.ExecContext(ctx, query, user.Email, user.FirstName, user.LastName, user.Password, user.CreatedAt, user.UpdatedAt)
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(user.Password), 12)
 	if err != nil {
-		log.Printf("failed to insert user: %v", err)
-		return err
+		log.Printf("failed to generate hashed password: %v", err)
+		return 0, err
+	}
+
+	var newID int
+	query := "INSERT INTO users (email, first_name, last_name, password, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6) returning id"
+
+	retryCount := 3
+	for retries := 0; retries < retryCount; retries++ {
+		err = db.QueryRowContext(ctx, query, user.Email, user.FirstName, user.LastName, hashedPassword, user.CreatedAt, user.UpdatedAt).Scan(&newID)
+		if err == nil {
+			user.ID = newID
+			return 0, nil
+		}
+		log.Printf("failed to insert user, attempt %d: %v", retries+1, err)
+		if retries < retryCount-1 {
+			time.Sleep(time.Second * 2)
+		}
+	}
+	return 0, fmt.Errorf("failed to insert user after %d attempts: %w", retryCount, err)
+}
+
+// ResetPassword resets the password for the user with the specified email address.
+// It returns an error if the user does not exist or if there is an error resetting the password.
+//
+// Parameters:
+//   - email: The email address of the user to reset the password for.
+//
+// Returns:
+//   - An error if the user does not exist or if there is an error resetting the password.
+func (u *User) ResetPassword(password string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
+	defer cancel()
+
+	// Select the user with the specified password address
+	query := "update users set password = $1 where id = $2"
+	_, err := db.ExecContext(ctx, query, password, u.ID)
+	if err != nil {
+		log.Printf("failed to update user: %v", err)
 	}
 
 	return nil
+}
+
+// PasswordMatches checks if the provided password matches the user's password.
+// It returns true if the password matches, false otherwise.
+//
+// Parameters:
+//   - password: The password to check.
+//
+// Returns:
+//   - True if the password matches, false otherwise.
+func (u *User) PasswordMatches(password string) (bool, error) {
+	err := bcrypt.CompareHashAndPassword([]byte(u.Password), []byte(password))
+	if err != nil {
+		switch {
+		case errors.Is(err, bcrypt.ErrMismatchedHashAndPassword):
+			return false, nil
+		default:
+			return false, err
+		}
+	}
+	return true, nil
 }
 
 // Token is a struct that represents a token in the database
@@ -234,4 +291,66 @@ type Token struct {
 	UpdatedAt time.Time `json:"updated_at"`
 	// Expiry is the expiry time of the token
 	Expiry time.Time `json:"expiry"`
+}
+
+// GetByToken retrieves a token from the database by its token value.
+// It returns a pointer to the Token struct if the token is found, or nil if not found.
+//
+// Parameters:
+//   - token: The token value to retrieve.
+//
+// Returns:
+//   - A pointer to the Token struct representing the token with the specified token value.
+//   - An error if any occurs during the query execution or row scanning.
+func (t *Token) GetByToken(plainText string) (*Token, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
+	defer cancel()
+
+	// Select the plainText with the specified plainText value
+	query := "SELECT id, user_id, email, plainText, token_hash, created_at, updated_at, expiry FROM tokens WHERE plainText = $1"
+
+	var token Token
+	row := db.QueryRowContext(ctx, query, plainText)
+	err := row.Scan(&token.ID, &token.UserID, &token.Email, &token.Token, &token.TokenHash, &token.CreatedAt, &token.UpdatedAt, &token.Expiry)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("no plainText found with plainText %s", plainText)
+
+		}
+		log.Printf("failed to get plainText by plainText: %v", err)
+		return nil, err
+	}
+
+	return &token, nil
+}
+
+// GetUserByToken retrieves the user associated with a token from the database.
+// It returns a pointer to the User struct if the user is found, or nil if not found.
+//
+// Parameters:
+//   - token: The token value to retrieve.
+//
+// Returns:
+//   - A pointer to the User struct representing the user associated with the token.
+//   - An error if any occurs during the query execution or row scanning.
+func (t *Token) GetUserByToken(token string) (*User, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
+	defer cancel()
+
+	// Select the user associated with the token
+	query := "SELECT id, email, first_name, last_name, password, created_at, updated_at FROM users WHERE id = (SELECT user_id FROM tokens WHERE token = $1)"
+
+	var user User
+	row := db.QueryRowContext(ctx, query, token)
+	err := row.Scan(&user.ID, &user.Email, &user.FirstName, &user.LastName, &user.Password, &user.CreatedAt, &user.UpdatedAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("no user found with token %s", token)
+
+		}
+		log.Printf("failed to get user by token: %v", err)
+		return nil, err
+	}
+
+	return &user, nil
 }
