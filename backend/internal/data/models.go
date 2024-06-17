@@ -3,6 +3,7 @@ package data
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"log"
 	"time"
 )
@@ -78,6 +79,68 @@ func (u *User) GetAll() ([]*User, error) {
 	}
 
 	return users, nil
+}
+
+// GetByEmail retrieves a user from the database by their email address.
+// It returns a pointer to the User struct if the user is found, or nil if not found.
+//
+// Parameters:
+//   - email: The email address of the user to retrieve.
+//
+// Returns:
+//   - A pointer to the User struct representing the user with the specified email address.
+//   - An error if any occurs during the query execution or row scanning.
+func (u *User) GetByEmail(email string) (*User, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
+	defer cancel()
+
+	// Select the user with the specified email address
+	query := "SELECT id, email, first_name, last_name, password, created_at, updated_at FROM users WHERE email = $1"
+
+	row := db.QueryRowContext(ctx, query, email)
+	var user User
+	err := row.Scan(&user.ID, &user.Email, &user.FirstName, &user.LastName, &user.Password, &user.CreatedAt, &user.UpdatedAt)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("no user found with email %s", email)
+
+		}
+			log.Printf("failed to get user by email: %v", err)
+			return nil, err
+	}
+
+	return &user, nil
+}
+
+// GetByID retrieves a user from the database by their ID.
+// It returns a pointer to the User struct if the user is found, or nil if not found.
+//
+// Parameters:
+//   - id: The ID of the user to retrieve.
+//
+// Returns:
+//   - A pointer to the User struct representing the user with the specified ID.
+//   - An error if any occurs during the query execution or row scanning.
+func (u *User) GetByID(id int) (*User, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
+	defer cancel()
+
+	// Select the user with the specified ID
+	query := "SELECT id, email, first_name, last_name, password, created_at, updated_at FROM users WHERE id = $1"
+
+	row := db.QueryRowContext(ctx, query, id)
+	var user User
+	err := row.Scan(&user.ID, &user.Email, &user.FirstName, &user.LastName, &user.Password, &user.CreatedAt, &user.UpdatedAt)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("no user found with ID %d", id)
+
+		}
+			log.Printf("failed to get user by ID: %v", err)
+			return nil, err
+	}
+
+	return &user, nil
 }
 
 // Token is a struct that represents a token in the database
