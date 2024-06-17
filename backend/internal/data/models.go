@@ -134,7 +134,7 @@ func (u *User) GetByID(id int) (*User, error) {
 	err := row.Scan(&user.ID, &user.Email, &user.FirstName, &user.LastName, &user.Password, &user.CreatedAt, &user.UpdatedAt)
 	if err != nil {
 		if err == sql.ErrNoRows {
-                  return nil, errors.New("user not found")
+      return nil, errors.New("user not found")
 
 		}
 			log.Printf("failed to get user by ID: %v", err)
