@@ -431,3 +431,114 @@ func (t *Token) AuthenticationToken(r *http.Request) (*User, error) {
 
 	return user, nil
 }
+
+// InsertToken inserts a new token into the database. It takes a token of
+// type Token and returns an error if any occurs during the token insertion process.
+//
+// Parameters:
+//   - token: The Token struct representing the token to insert.
+//
+// Returns:
+//   - An error if any occurs during the token insertion process.
+func (t *Token) InsertToken(token Token) error {
+	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
+	defer cancel()
+
+	// delete the token if it exists
+	err := t.DeleteToken(token.Token)
+	if err != nil {
+		log.Printf("failed to delete token: %v", err)
+		return err
+	}
+
+	// insert the token
+	query := "INSERT INTO tokens (user_id, email, token, token_hash, created_at, updated_at, expiry) VALUES ($1, $2, $3, $4, $5, $6, $7)"
+	_, err = db.ExecContext(ctx, query, token.UserID, token.Email, token.Token, token.TokenHash, time.Now(), time.Now(), token.Expiry)
+	if err != nil {
+		log.Printf("failed to insert token: %v", err)
+		return err
+	}
+
+	return nil
+}
+
+// DeleteToken deletes a token from the database. It takes a token of type Token and returns an error if any occurs during the token deletion process.
+//
+// Parameters:
+//   - token: The Token struct representing the token to delete.
+//
+// Returns:
+//   - An error if any occurs during the token deletion process.
+func (t *Token) DeleteToken(plainText string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
+	defer cancel()
+
+	query := "DELETE FROM tokens WHERE plainText = $1"
+	_, err := db.ExecContext(ctx, query, plainText)
+	if err != nil {
+		log.Printf("failed to delete token: %v", err)
+		return err
+	}
+
+	return nil
+}
+
+// GetUserWithToken retrieves the user associated with a token from the database.
+// It returns a pointer to the User struct if the user is found, or nil if not found.
+//
+// Parameters:
+//   - token: The token value to retrieve.
+//
+// Returns:
+//   - A pointer to the User struct representing the user associated with the token.
+//   - An error if any occurs during the query execution or row scanning.
+func (t *Token) GetUserWithToken(token string) (*User, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
+	defer cancel()
+
+	// Select the user associated with the token
+	query := "SELECT id, email, first_name, last_name, password, created_at, updated_at FROM users WHERE id = $1"
+
+	var user User
+	row := db.QueryRowContext(ctx, query, token)
+	err := row.Scan(&user.ID, &user.Email, &user.FirstName, &user.LastName, &user.Password, &user.CreatedAt, &user.UpdatedAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("no user found with token %v", token)
+
+		}
+		log.Printf("failed to get user by token (token user ID: %v): %v", token, err)
+		return nil, err
+	}
+
+	return &user, nil
+}
+
+// VaildateToken validates a token and returns a boolean indicating whether the token is valid or not.
+//
+// Parameters:
+//   - token: The token value to validate.
+//
+// Returns:
+//   - A boolean indicating whether the token is valid or not.
+func (t *Token) VaildateToken(token string) (bool, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
+	defer cancel()
+
+	// Select the user associated with the token
+	query := "SELECT id, email, first_name, last_name, password, created_at, updated_at FROM users WHERE id = $1"
+
+	var user User
+	row := db.QueryRowContext(ctx, query, token)
+	err := row.Scan(&user.ID, &user.Email, &user.FirstName, &user.LastName, &user.Password, &user.CreatedAt, &user.UpdatedAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, fmt.Errorf("no user found with token %v", token)
+
+		}
+		log.Printf("failed to get user by token (token user ID: %v): %v", token, err)
+		return false, err
+	}
+
+	return true, nil
+}
