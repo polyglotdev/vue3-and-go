@@ -9,6 +9,8 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/http"
+	"strings"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
@@ -348,10 +350,10 @@ func (t *Token) GetUserByToken(token Token) (*User, error) {
 	err := row.Scan(&user.ID, &user.Email, &user.FirstName, &user.LastName, &user.Password, &user.CreatedAt, &user.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, fmt.Errorf("no user found with token %s", token)
+			return nil, fmt.Errorf("no user found with token %v", token)
 
 		}
-		log.Printf("failed to get user by token: %v", err)
+		log.Printf("failed to get user by token (token user ID: %v): %v", token.UserID, err)
 		return nil, err
 	}
 
@@ -385,4 +387,47 @@ func (t *Token) GenerateToken(userID int, ttl time.Duration) (*Token, error) {
 	token.TokenHash = hash[:]
 
 	return token, nil
+}
+
+// AuthenticationToken takes a pointer to http.Request and returns a pointer to User and an error.
+// It returns a pointer to the User struct if the user is found, or nil if not found.
+//
+// Parameters:
+//   - r: The http.Request struct representing the request.
+//
+// Returns:
+//   - A pointer to the User struct representing the user with the specified email address.
+//   - An error if any occurs during the query execution or row scanning.
+func (t *Token) AuthenticationToken(r *http.Request) (*User, error) {
+	token := r.Header.Get("Authorization")
+	if token == "" {
+		return nil, errors.New("no token provided")
+	}
+
+	headerParts := strings.Split(token, " ")
+	if len(headerParts) != 2 || headerParts[0] != "Bearer" {
+		return nil, errors.New("invalid token format")
+	}
+
+	tk := headerParts[1]
+
+	if len(tk) != 26 {
+		return nil, errors.New("invalid token length")
+	}
+
+	tokenModel, err := t.GetByToken(tk)
+	if err != nil {
+		return nil, errors.New("no matching token found")
+	}
+
+	if tokenModel.Expiry.Before(time.Now()) {
+		return nil, errors.New("token expired")
+	}
+
+	user, err := t.GetUserByToken(*tokenModel)
+	if err != nil {
+		return nil, errors.New("no matching user found")
+	}
+
+	return user, nil
 }
